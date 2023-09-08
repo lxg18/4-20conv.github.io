@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Преобразователь 4-20мА</title>
+  <style>
+    body {
+      background-color: black;
+      font-family: 'Verdana';      
+      color: #003;
+    }
+    .name {
+      text-align: center;
+      color: white;
+    }
+    table {
+      border: 1px solid black;
+      border-collapse: collapse;
+      margin-left: auto;
+      margin-right: auto;
+      background-color: gray;
+      color: yellow;
+      font-size: 2vw;
+    }
+    
+    th, td {
+      padding: 0.5ch;
+      padding-top: 0.25ch;
+      padding-bottom: 0.25ch;
+      vertical-align: middle;
+    }
+    
+    th {
+      text-align: right;
+      font-weight: lighter;
+    }
+
+    td {
+      width: 6ch;
+      text-align: left;
+    }
+    
+    input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 2vw;
+    }
+    select, option {      
+      font-size: 2vw;
+    }
+    .copyright {
+      text-align: center;      
+      color: white;
+    }
+    .input-container {
+      position: relative;
+    }
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      margin-left: 2ch;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2vw;
+      color: #f00;
+    }    
+  </style>
+
+  <script>
+    const fractionDigits = 3; // количество чисел после запятой
+    let inputs; // список всех полей ввода на странице
+    let ovelays; // список всех тегов с классом overlay
+    let upperLimit; // верхний предел измерения
+    let lowerLimit; // нижний предел измерения
+    let physicalValue; // физическое значение
+    let value4to20mA; // значение 4-20мА
+    let percent; // процент, %
+    let adcValue; // значение АЦП
+    let selectedADCParam = "0"; // выбранный пункт в выпадающем списке параметров АЦП
+    let adcParam = { // параметры АЦП 
+      p1:{min: 0, max: 27648}, // [0..27648]
+      p2:{min: 0, max: 65535}, // [0..65535]
+      p3:{min: 0, max: 1023}, // [0..1023]
+    };
+    let isShiftKeyPress = false; // состояние клавиши Shift (если клавиша нажата, то шаг изменения значений равен 1, иначе 0.1)
+
+    function normalize(val, min, max) { // нормализация
+      min = parseFloat(min), max = parseFloat(max);
+      return (val - min) / (max - min);
+    }
+    
+    function denormalize(normVal, min, max) { // денормализация
+      min = parseFloat(min), max = parseFloat(max);
+      return (normVal * (max - min)) + min;
+    }
+
+    function calculateADC(normVal) { // расчёт АЦП      
+      if (selectedADCParam == "0") { // [0..27648]
+        adcValue.value = Math.round(denormalize(normVal, adcParam.p1.min, adcParam.p1.max));
+      }
+      else if (selectedADCParam == "1") { // [0..65535]
+        adcValue.value = Math.round(denormalize(normVal, adcParam.p2.min, adcParam.p2.max));
+      }
+      else if (selectedADCParam == "2") { // [0..1023]
+        adcValue.value = Math.round(denormalize(normVal, adcParam.p3.min, adcParam.p3.max));
+      }
+    }
+    
+    function calculate(input) {
+      if (upperLimit.value == lowerLimit.value) { // если верхний предел измерения равен нижнему
+        overlays.forEach(overlay => {
+          overlay.textContent = "не определено";
+        });  
+        percent.value = "";
+        value4to20mA.value = "";
+        adcValue.value = "";
+      }
+      else {
+        overlays.forEach(overlay => {
+          overlay.textContent = "";
+        }); 
+        switch (input.id) {
+          case "upperLimit": 
+            physicalValue.max = upperLimit.value; 
+            physicalValue.value = upperLimit.value; 
+            calculate(inputs[2]); // расчёт физического значения
+          break;
+          case "lowerLimit": 
+            physicalValue.min = lowerLimit.value;
+            physicalValue.value = lowerLimit.value; 
+            calculate(inputs[2]); // расчёт физического значения
+          break;
+          case "physicalValue": 
+            // нормализованное значение
+            let normalizePhysicalValue = normalize(physicalValue.value, physicalValue.min, physicalValue.max);
+            // проценты
+            percent.value = parseFloat((normalizePhysicalValue*100).toFixed(fractionDigits));
+            // 4-20
+            value4to20mA.value = parseFloat((denormalize(normalizePhysicalValue, 4, 20)).toFixed(fractionDigits));
+            // АЦП
+            calculateADC(normalizePhysicalValue);       
+          break;
+          case "value4to20mA": 
+            // нормализованное значение
+            let normalizeValue4to20mA = normalize(value4to20mA.value, 4, 20);
+            // физическая величина
+            physicalValue.value = parseFloat((denormalize(normalizeValue4to20mA, physicalValue.min, physicalValue.max)).toFixed(fractionDigits));
+            // проценты
+            percent.value = parseFloat((normalizeValue4to20mA*100).toFixed(fractionDigits));  
+            // АЦП
+            calculateADC(normalizeValue4to20mA);
+          break;
+          case "percent":
+            // нормализованное значение
+            let normalizePercent = parseFloat((percent.value/100).toFixed(fractionDigits));
+            // физическая величина
+            physicalValue.value = parseFloat((denormalize(normalizePercent, physicalValue.min, physicalValue.max)).toFixed(fractionDigits));
+            // 4-20
+            value4to20mA.value = parseFloat((denormalize(normalizePercent, 4, 20)).toFixed(fractionDigits));
+            // АЦП
+            calculateADC(normalizePercent);
+          break;
+          case "adcValue": 
+            // нормализованное значение
+            let normalizeAdcValue;
+            if (selectedADCParam == "0") { // [0..27648]
+              normalizeAdcValue = normalize(adcValue.value, adcParam.p1.min, adcParam.p1.max);
+            }
+            else if (selectedADCParam == "1") { // [0..65535]
+              normalizeAdcValue = normalize(adcValue.value, adcParam.p2.min, adcParam.p2.max);
+            }
+            else if (selectedADCParam == "2") { // [0..1023]
+              normalizeAdcValue = normalize(adcValue.value, adcParam.p3.min, adcParam.p3.max);
+            }
+            // физическая величина
+            physicalValue.value = parseFloat((denormalize(normalizeAdcValue, physicalValue.min, physicalValue.max)).toFixed(fractionDigits));
+            // 4-20
+            value4to20mA.value = parseFloat((denormalize(normalizeAdcValue, 4, 20)).toFixed(fractionDigits));
+            // проценты
+            percent.value = parseFloat((normalizeAdcValue*100).toFixed(fractionDigits)); 
+          break;
+        }
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() { // ожидаем загрузки страницы
+      inputs = document.querySelectorAll('input'); // Получаем список всех полей ввода на странице
+      [upperLimit, lowerLimit, physicalValue, value4to20mA, percent, adcValue] = inputs; // деструктуризация списка полей ввода
+      overlays = document.querySelectorAll('.overlay');
+      // Обработчик события change для каждого поля ввода      
+      inputs.forEach(input => {
+        input.addEventListener('change', event => {
+          calculate(input);
+        });
+      });    
+      // Обработчик события keyup для каждого поля ввода      
+      inputs.forEach(input => {
+        input.addEventListener('keyup', event => {
+          calculate(input);
+        });
+      });  
+      // Обработчик события change для раскрывающегося списка  
+      document.querySelector('select').addEventListener('change', function(event) {
+        selectedADCParam = event.target.value;
+        calculate(inputs[4]);
+        console.log("ok");
+      });      
+      // Обработчик события keydown для клавиши Shift
+      document.addEventListener('keydown', function(event) {
+        if (event.shiftKey && !isShiftKeyPress) {
+          isShiftKeyPress = true;
+          // Нажата клавиша Shift
+          try {
+            upperLimit.step = 1;
+            lowerLimit.step = 1;
+            physicalValue.step = 1;
+            value4to20mA.step = 1;
+            percent.step = 1;
+          }
+          catch {
+            isShiftKeyPress = false;
+          }
+        }
+      });
+
+      // Обработчик события keyup для клавиши Shift
+      document.addEventListener('keyup', function(event) {
+        if (!event.shiftKey && isShiftKeyPress) {
+          isShiftKeyPress = false;
+          // Отжата клавиша Shift
+          upperLimit.step = 0.1;
+          lowerLimit.step = 0.1;
+          physicalValue.step = 0.1;
+          value4to20mA.step = 0.1;
+          percent.step = 0.1;
+        }
+      });
+    });
+    
+  </script>
+
+</head>
+<body>
+  <table>
+    <tr>
+      <th colspan="2" class = "name">ПРЕОБРАЗОВАТЕЛЬ 4-20мА</th>
+    </tr>
+
+    </tr>
+      <td colspan="2"><hr></td>
+    <tr>
+
+    <tr>
+      <th>Верхний предел измерения:</th>
+      <td><input type="number" id="upperLimit" value = "100" step="0.1" title="Только вещественные или целые числа"></td>
+    </tr>
+
+    <tr>
+      <th>Нижний предел измерения:</th>
+      <td><input type="number" id="lowerLimit" value = "0" step="0.1" title="Только вещественные или целые числа"></td>
+    </tr>
+
+    <tr>
+      <td colspan="2"><hr></td>
+    </tr>
+
+    <tr>
+      <th>Физическое значение:</th>
+      <td>
+        <input type="number" id="physicalValue" value = "0" min="0" max="100" step="0.1" title="Только вещественные или целые числа">
+      </td>
+    </tr>
+
+    <tr>
+      <th>Значение 4-20мА:</th>
+      <td>
+        <div class="input-container">
+          <input type="number" id="value4to20mA" value = "4" min="4" max="20" step="0.1" title="Только вещественные или целые числа">
+          <div><span class="overlay"></span></div>
+        </div>
+      </td>
+    </tr>
+
+    <tr>
+      <th>Процент, %:</th>
+      <td>
+        <div class="input-container">
+          <input type="number" id="percent" value = "0" min="0" max="100" step="0.1" title="Только вещественные или целые числа">
+          <div><span class="overlay"></span></div>
+        </div>
+      </td>      
+    </tr>
+
+    <tr>
+      <td colspan="2"><hr></td>
+    </tr>
+
+    </tr>
+      <th>Значение АЦП:</th>
+      <td>
+        <div class="input-container">
+          <input type="number" id="adcValue" value = "0" step="1" title="Только целые числа">
+          <div><span class="overlay"></span></div>
+        </div>
+      </td>
+    </tr>    
+
+    <tr>
+      <th>Параметры АЦП:</th>
+      <td>
+        <select id="options">
+          <option value="0">[4..20мА] = [0..27648]</option>
+          <option value="1">[4..20мА] = [0..65535]</option>
+          <option value="2">[4..20мА] = [0..1023]</option>
+        </select>
+      </td>
+    </tr>
+
+    <tr>
+      <td colspan="2"><hr></td>
+    </tr>
+
+    <tr>
+      <td colspan="2" class = "copyright">by Lxg18 ©</td>
+    </tr>
+  </table>
+</body>
+</html>
+
